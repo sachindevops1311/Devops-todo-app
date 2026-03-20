@@ -1,4 +1,8 @@
-from flask import jsonify
+from flask import jsonify, request
+from app.todo_service import get_all_todos, create_todo, update_todo, delete_todo
+from app.cache import get_redis_connection
+import json
+import os
 
 def register_routes(app):
 
@@ -10,14 +14,23 @@ def register_routes(app):
     def health():
         return jsonify({"status": "healthy", "message": "App is running"})
 
-    @app.route("/todos")
+    @app.route("/todos", methods=["GET"])
     def get_todos():
-        todos = [
-            {"id": 1, "task": "Learn Docker", "done": False},
-            {"id": 2, "task": "Learn Ansible", "done": False},
-            {"id": 3, "task": "Learn Terraform", "done": False},
-        ]
-        return jsonify({"todos": todos, "count": len(todos)})
+        r = get_redis_connection()
+        cached = r.get("todos")
+        if cached:
+            return jsonify({"todos": json.loads(cached), "source": "cache"})
+        todos = get_all_todos()
+        r.setex("todos", 60, json.dumps(todos))
+        return jsonify({"todos": todos, "source": "database"})
+
+    @app.route("/todos", methods=["POST"])
+    def add_todo():
+        data = request.get_json()
+        todo = create_todo(data["task"])
+        r = get_redis_connection()
+        r.delete("todos")
+        return jsonify(todo), 201
 
     @app.errorhandler(404)
     def not_found(e):
